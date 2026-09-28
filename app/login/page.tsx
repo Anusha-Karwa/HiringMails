@@ -1,11 +1,9 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { LogoMark } from "@/components/HiringBackdrop";
 
 export default function LoginPage() {
-  const router = useRouter();
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -20,10 +18,10 @@ export default function LoginPage() {
       body: JSON.stringify({ password }),
     });
     setBusy(false);
-    if (res.ok) {
-      router.push("/");
-      router.refresh();
-    } else setError("That password didn't work.");
+    // Full page load, not router.push: the client router may still hold a pre-login copy of "/"
+    // (a cached redirect back here), which made a correct password look like it failed.
+    if (res.ok) window.location.assign("/");
+    else setError("That password didn't work.");
   }
 
   return (
