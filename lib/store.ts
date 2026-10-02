@@ -15,7 +15,12 @@ const COLS =
   "id, created_at, file_name, role_applied, name, email, phone, location, redacted_text, removed, analysis, evaluation, flags, score_runs, error, decision, decided_at, email_draft, email_sent_at, email_sent_to, interview_at, interview_minutes, interview_mode, interview_link";
 
 function supabaseStore(url: string, key: string): Store {
-  const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  const db = createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    // Next.js caches fetch() in server components by default. Without no-store, pages kept showing
+    // the rows as they were on the first read: new uploads missing from the ranking, drafts not appearing.
+    global: { fetch: (input, init) => fetch(input, { ...init, cache: "no-store" }) },
+  });
   const check = <T,>(res: { data: T; error: { message: string } | null }): T => {
     if (res.error) throw new Error(`Supabase: ${res.error.message}`);
     return res.data;

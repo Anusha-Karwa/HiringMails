@@ -21,6 +21,8 @@ export const viewport: Viewport = {
 };
 
 export const dynamic = "force-dynamic";
+// Belt and braces: no page may serve a cached database read.
+export const fetchCache = "force-no-store";
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const memory = getStore().kind === "memory";

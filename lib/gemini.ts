@@ -163,10 +163,12 @@ const EMAIL_SYSTEM = `You write short, warm, specific emails from Arjun Mehta, f
 Rules:
 - Address the candidate as ${FIRST_NAME} exactly (it is replaced later). Never invent a name.
 - Plain text, no markdown. 90-160 words. Sign off as "Arjun Mehta, Founder, Kargo".
+- Use the role title exactly as given (e.g. "Senior Product Manager", never shortened).
+- The candidate has ONLY sent a written application. There has been no call, interview or conversation: never say or imply that you spoke, met or talked.
 - Mention one or two of the candidate's strengths given to you, in natural words. Never mention scores, rubrics, rankings, AI, or other candidates.
 - INVITE: say Arjun would like to meet them for the role. Do NOT state the time, length, place or format yourself: include the scheduling instruction you are given verbatim, as its own paragraph, and it covers all of that.
-- REJECTION: kind and clear that Kargo won't move forward for this role right now. Thank them for their time. No vague "we'll keep you on file" promises unless told. No feedback that could read as about age, gender, college or background.
-Respond with JSON: {"subject": "...", "body": "..."}`;
+- REJECTION: kind and clear that Kargo won't move forward with their application for this role right now. Thank them for applying. No vague "we'll keep you on file" promises unless told. No feedback that could read as about age, gender, college or background.
+Respond with JSON: {"body": "..."}`;
 
 export function fallbackEmail(kind: EmailDraft["kind"], role: Role, schedule: string): Omit<EmailDraft, "drafted_at"> {
   const roleName = role === "PM" ? "Product Manager" : "Senior Product Manager";
@@ -199,12 +201,14 @@ export async function draftEmail(input: {
     scheduling_instruction: input.kind === "invite" ? input.schedule : undefined,
   };
   const res = await model(EMAIL_SYSTEM, 0.4).generateContent(JSON.stringify(payload));
-  const parsed = JSON.parse(res.response.text()) as { subject?: unknown; body?: unknown };
+  const parsed = JSON.parse(res.response.text()) as { body?: unknown };
   const fb = fallbackEmail(input.kind, input.role, input.schedule);
-  const subject = typeof parsed.subject === "string" && parsed.subject.trim() ? parsed.subject.trim() : fb.subject;
   let body = typeof parsed.body === "string" && parsed.body.trim() ? parsed.body.trim() : fb.body;
+  // The model sometimes shortens "Senior Product Manager"; the role title must be exact.
+  if (input.role === "SPM") body = body.replace(/(?<!Senior )Product Manager/g, "Senior Product Manager");
   if (input.kind === "invite" && input.schedule && !body.includes(input.schedule)) body += `\n\n${input.schedule}`;
-  return { kind: input.kind, subject: subject.slice(0, 200), body: body.slice(0, 4000) };
+  // Subject is fixed text so it always names the right role.
+  return { kind: input.kind, subject: fb.subject, body: body.slice(0, 4000) };
 }
 
 export const categoryLabel = (id: CategoryId) => CATEGORIES.find((c) => c.id === id)?.label ?? id;
