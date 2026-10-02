@@ -20,6 +20,19 @@ export function firstName(name: string | null): string {
 
 export const personalise = (text: string, name: string | null) => text.split(FIRST_NAME).join(firstName(name));
 
+export const DEFAULT_FROM = "Kargo Hiring <onboarding@resend.dev>";
+
+/**
+ * RESEND_FROM as Resend expects it. Env values pasted into a dashboard often keep their quotes
+ * ("Kargo Hiring <...>"), which Resend rejects, so strip them; anything still malformed falls
+ * back to the shared Resend sender instead of failing the send.
+ */
+export function senderAddress(raw: string | undefined): string {
+  const v = (raw ?? "").trim().replace(/^["']+|["']+$/g, "").trim();
+  if (/^[^<>"]*<[^\s<>@]+@[^\s<>@]+\.[^\s<>@]+>$/.test(v) || /^[^\s<>@"]+@[^\s<>@]+\.[^\s<>@]+$/.test(v)) return v;
+  return DEFAULT_FROM;
+}
+
 export interface Attachment {
   filename: string;
   content: string; // plain text, base64-encoded before sending
@@ -29,7 +42,7 @@ export interface Attachment {
 export async function sendEmail(to: string, subject: string, text: string, attachments: Attachment[] = []): Promise<{ id: string }> {
   const key = process.env.RESEND_API_KEY;
   if (!key) throw new Error("RESEND_API_KEY is not set");
-  const from = process.env.RESEND_FROM || "Kargo Hiring <onboarding@resend.dev>";
+  const from = senderAddress(process.env.RESEND_FROM);
   const replyTo = process.env.RESEND_REPLY_TO;
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
