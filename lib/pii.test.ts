@@ -91,3 +91,29 @@ describe("toAnalysis() enforces no quote, no score", () => {
     expect(a.confidence).toBe("medium"); // red flags lower confidence
   });
 });
+
+describe("PDF quirks", () => {
+  it("undoubles names stored twice", async () => {
+    const { undouble } = await import("./pii");
+    expect(undouble("Asha MehraASHA MEHRA")).toBe("Asha Mehra");
+    expect(undouble("Asha Mehra")).toBe("Asha Mehra");
+  });
+
+  it("falls back to the file name for the name, and redacts it even when glued to other text", () => {
+    const p = prepareCv(
+      "Asha MehraASHA MEHRA Email: asha@example.com\nMobile: +91 98765 4321098765 43210\nSummary\nPM at a 3PL. Asha MehraASHA MEHRA\nEducation\nExample University",
+      "12_asha_mehra.pdf",
+    );
+    expect(p.contact.name).toBe("Asha Mehra");
+    expect(p.contact.phone).toBe("+91 98765 43210");
+    expect(p.contact.location).toBeNull();
+    expect(p.redacted.toLowerCase()).not.toMatch(/asha|mehra|example university/);
+  });
+
+  it("rebuilds PDF lines from text positions", async () => {
+    const { pdfItemsToText } = await import("./extract");
+    const item = (str: string, x: number, y: number, width = str.length * 5) => ({ str, transform: [1, 0, 0, 1, x, y], width, height: 10 });
+    const text = pdfItemsToText([[item("Summary", 10, 700), item("Built", 10, 680), item("the", 40, 680), item("tracker", 60, 680), item("Name", 10, 750)]]);
+    expect(text.split("\n")).toEqual(["Name", "Summary", "Built the tracker"]);
+  });
+});

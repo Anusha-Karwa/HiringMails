@@ -30,6 +30,6 @@ export async function POST(req: Request) {
     if (e instanceof UnsupportedFileError) return fail(e.message);
     return fail(`Couldn't read ${fileName}. Accepted: ${ACCEPTED.join(", ")}.`);
   }
-  const candidate = await ingest(fileName, text, role);
-  return json({ id: candidate.id, error: candidate.error }, 201);
+  const { candidate, duplicate } = await ingest(fileName, text, role);
+  return json({ id: candidate.id, error: candidate.error, duplicate }, duplicate ? 200 : 201);
 }

@@ -49,7 +49,38 @@ function looksLikeName(line: string): boolean {
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-export function prepareCv(raw: string): Prepared {
+const titleCase = (s: string) => s.toLowerCase().replace(/\b[a-z]/g, (ch) => ch.toUpperCase());
+
+/** "17_pranav_joshi.pdf" -> "Pranav Joshi": a fallback when the CV has no clean name line. */
+export function nameFromFileName(fileName?: string): string | null {
+  if (!fileName) return null;
+  const words = fileName
+    .replace(/\.[a-z0-9]+$/i, "")
+    .split(/[\s_.-]+/)
+    .filter((w) => /^[a-z]+$/i.test(w) && !/^(cv|resume|final|updated|new|copy|pm|spm|apm)$/i.test(w));
+  return words.length >= 2 && words.length <= 4 ? titleCase(words.join(" ")) : null;
+}
+
+const LABEL_RE = /\b(email|e-mail|mobile|phone|tel|portfolio|linkedin|github|website|address)\s*:?/gi;
+
+// Indian mobile, optionally +91: "+91 98142 60317", "9814260317". Tried before the generic pattern,
+// which over-matches when a PDF repeats the digits.
+const INDIAN_MOBILE_RE = /(?:\+91[\s-]?)?[6-9]\d{4}[\s-]?\d{5}/;
+
+/** "Rohan BasuROHAN BASU" -> "Rohan Basu" (some PDFs store the name twice, e.g. a visible and a hidden copy). */
+export function undouble(s: string): string {
+  const t = s.trim();
+  const key = (x: string) => x.toLowerCase().replace(/\s+/g, "");
+  for (let i = Math.floor(t.length / 2) - 2; i <= Math.ceil(t.length / 2) + 2; i++) {
+    if (i <= 0 || i >= t.length) continue;
+    const a = t.slice(0, i);
+    const b = t.slice(i);
+    if (key(a).length >= 3 && key(a) === key(b)) return a.trim();
+  }
+  return t;
+}
+
+export function prepareCv(raw: string, fileName?: string): Prepared {
   const removed: string[] = [];
   const lines = raw.replace(/\r/g, "").split("\n").map((l) => l.replace(/ /g, " "));
 
@@ -61,34 +92,44 @@ export function prepareCv(raw: string): Prepared {
 
   const headerText = header.join("\n");
   const email = (headerText.match(EMAIL_RE) ?? raw.match(EMAIL_RE))?.[0] ?? null;
-  const phone = (headerText.match(PHONE_RE) ?? [])
-    .map((p) => p.trim())
-    .find((p) => p.replace(/\D/g, "").length >= 10) ?? null;
-  const nameLine = header.find(looksLikeName) ?? null;
+  const phone =
+    headerText.match(INDIAN_MOBILE_RE)?.[0].trim() ??
+    (headerText.match(PHONE_RE) ?? []).map((p) => p.trim()).find((p) => p.replace(/\D/g, "").length >= 10) ??
+    null;
 
-  // Whatever is left on the contact line after removing email/phone/links is the location.
+  // The name is usually the first thing in the header, sometimes sharing a line with "Email: ...".
+  // Some PDFs also carry it twice ("Rohan BasuROHAN BASU"), so take one copy.
+  const headerNames = header.map((h) => undouble(h.split(/\b(?:email|e-mail|mobile|phone|portfolio|linkedin)\b|@|\||\+?\d{5}/i)[0].trim()));
+  const nameLine = headerNames.find(looksLikeName) ?? null;
+  const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z]/g, "");
+
+  // Whatever is left on the contact line after removing name/email/phone/links is the location.
   let location: string | null = null;
   for (const h of header) {
-    if (h === nameLine) continue;
+    if (nameLine && nameKey(undouble(h)) === nameKey(nameLine)) continue;
     const rest = h
+      .replace(nameLine ? new RegExp(escapeRe(nameLine), "gi") : /$^/, "")
+      .replace(INDIAN_MOBILE_RE, "")
       .replace(EMAIL_RE, "")
       .replace(URL_RE, "")
       .replace(PHONE_RE, "")
+      .replace(LABEL_RE, "")
       .split(/\s*[|·•,]\s*|\s{2,}/)
       .map((p) => p.trim())
-      .filter((p) => p && !/^[+\d\s()-]+$/.test(p));
-    if (rest.length) {
-      location = rest.join(", ");
+      .filter((p) => p && /[a-z]/i.test(p) && !/^[+\d\s()/-]+$/.test(p))
+      .filter((p) => !nameLine || !nameKey(p).includes(nameKey(nameLine.split(/\s+/)[0])));
+    const found = rest.join(", ");
+    // A real location is short ("Mumbai, Maharashtra"); anything longer is body text that leaked in.
+    if (rest.length && found.length <= 60 && found.split(/\s+/).length <= 8) {
+      location = found;
       break;
     }
   }
 
-  const displayName =
-    nameLine && nameLine === nameLine.toUpperCase()
-      ? nameLine.toLowerCase().replace(/\b[a-z]/g, (ch) => ch.toUpperCase())
-      : nameLine;
+  const fileNameGuess = nameFromFileName(fileName);
+  const displayName = nameLine ? (nameLine === nameLine.toUpperCase() ? titleCase(nameLine) : nameLine) : fileNameGuess;
   const contact: ContactDetails = { name: displayName, email, phone, location };
-  if (nameLine) removed.push("name");
+  if (displayName) removed.push("name");
   if (email) removed.push("email");
   if (phone) removed.push("phone");
 
@@ -112,11 +153,20 @@ export function prepareCv(raw: string): Prepared {
   text = text.replace(PERSONAL_LINE_RE, "");
 
   // The candidate's own name anywhere in the body (e.g. quoted in a review note).
-  if (nameLine) {
-    for (const part of nameLine.split(/\s+/).filter((p) => p.length >= 3)) {
-      text = text.replace(new RegExp(`\\b${escapeRe(part)}\\b`, "gi"), "the candidate");
-    }
+  // Name parts come from the name line and the file name, so a name glued to other text in a PDF
+  // ("Pranav JoshiPRANAV JOSHI") is still caught. Parts of 4+ letters match without word boundaries.
+  const parts = new Set(
+    [nameLine, fileNameGuess]
+      .filter((n): n is string => Boolean(n))
+      .flatMap((n) => n.split(/\s+/))
+      .filter((p) => p.length >= 3)
+      .map((p) => p.toLowerCase()),
+  );
+  for (const part of Array.from(parts).sort((a, b) => b.length - a.length)) {
+    const re = part.length >= 4 ? new RegExp(escapeRe(part), "gi") : new RegExp(`\\b${escapeRe(part)}\\b`, "gi");
+    text = text.replace(re, " the candidate ");
   }
+  text = text.replace(/(?:\s*the candidate\s*){2,}/g, " the candidate ").replace(/[ \t]{2,}/g, " ");
   for (const [re, to] of PRONOUNS) text = text.replace(re, to);
 
   const locationLine = location ? `Location (from CV header): ${location}\n\n` : "";

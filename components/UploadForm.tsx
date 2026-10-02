@@ -36,10 +36,12 @@ export function UploadForm() {
       fd.set("role", role);
       try {
         const res = await fetch("/api/candidates", { method: "POST", body: fd });
-        const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string | null };
-        if (!res.ok) patch(item.key, { status: "error", message: data.error ?? `Failed (${res.status})` });
+        const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string | null; duplicate?: boolean };
+        if (res.status === 504) {
+          patch(item.key, { status: "error", message: "Took too long. Upload it again: it won't be duplicated." });
+        } else if (!res.ok) patch(item.key, { status: "error", message: data.error ?? `Failed (${res.status})` });
         else if (data.error) patch(item.key, { status: "error", message: data.error, id: data.id });
-        else patch(item.key, { status: "done", message: "Scored", id: data.id });
+        else patch(item.key, { status: "done", message: data.duplicate ? "Already here, updated" : "Scored", id: data.id });
       } catch {
         patch(item.key, { status: "error", message: "Network error" });
       }
@@ -151,9 +153,10 @@ export function UploadForm() {
         </p>
         <div className="flex gap-2">
           {done > 0 && !busy && (
-            <Link href="/" className="btn-secondary">
+            // Plain link (full load) so the ranking can't come from a pre-upload router cache.
+            <a href="/" className="btn-secondary">
               View ranking
-            </Link>
+            </a>
           )}
           <button type="button" className="btn-primary" disabled={!role || !pending || busy} onClick={run}>
             {busy ? "Scoring…" : "Score CVs"}

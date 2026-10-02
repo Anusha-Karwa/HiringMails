@@ -7,8 +7,36 @@ import { getStore } from "./store";
 import type { Analysis, Candidate } from "./types";
 
 /** Input -> Context: split contact details from the text the AI may see, then store it. */
-export async function ingest(fileName: string, rawText: string, role: Role): Promise<Candidate> {
-  const prepared = prepareCv(rawText);
+export async function ingest(
+  fileName: string,
+  rawText: string,
+  role: Role,
+): Promise<{ candidate: Candidate; duplicate: boolean }> {
+  const prepared = prepareCv(rawText, fileName);
+
+  // Same person uploaded again (same email, or same file name and CV text): reuse, don't duplicate.
+  const existing = (await getStore().list()).find(
+    (c) =>
+      (prepared.contact.email && c.email?.toLowerCase() === prepared.contact.email.toLowerCase()) ||
+      (c.file_name === fileName && c.redacted_text === prepared.redacted),
+  );
+  if (existing) {
+    // New version of the CV: refresh the text and re-score. Same text: reuse, scoring it only if a
+    // previous attempt never finished (e.g. it timed out).
+    if (existing.redacted_text !== prepared.redacted || existing.role_applied !== role) {
+      const refreshed = await getStore().update(existing.id, {
+        file_name: fileName,
+        role_applied: role,
+        ...prepared.contact,
+        redacted_text: prepared.redacted,
+        removed: prepared.removed,
+        analysis: null, // fresh text, so no consistency comparison against the old scores
+      });
+      return { candidate: await score(refreshed), duplicate: true };
+    }
+    return { candidate: existing.analysis ? existing : await score(existing), duplicate: true };
+  }
+
   const created = await getStore().create({
     file_name: fileName,
     role_applied: role,
@@ -30,7 +58,7 @@ export async function ingest(fileName: string, rawText: string, role: Role): Pro
     interview_mode: null,
     interview_link: null,
   });
-  return score(created);
+  return { candidate: await score(created), duplicate: false };
 }
 
 function flagsFor(c: Candidate, a: Analysis, evalFlags: string[], inconsistent: string[]): string[] {

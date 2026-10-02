@@ -35,7 +35,7 @@ async function main() {
 
   for (const f of files) {
     const raw = await extractText(f, readFileSync(path.join(dir, f)));
-    const prepared = prepareCv(raw);
+    const prepared = prepareCv(raw, f);
     const a = await scoreCv(prepared.redacted, "PM");
     rows.push({
       name: prepared.contact.name ?? f,
